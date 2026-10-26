@@ -169,6 +169,33 @@ html, body {
 .disc { font-size: 10px; line-height: 1.35; opacity: .55; margin-top: 4px; }
 .hidden { display: none !important; }
 
+/* ---------- shorter phones / browser toolbars: keep the whole end card on screen ---------- */
+@media (max-height: 820px) {
+  #end { padding: 10px; }
+  #end .panel { padding: 12px 14px 8px; }
+  #end .elogo { width: 42px; height: 42px; }
+  #endTitle { font-size: 21px; margin: 2px 0 6px; }
+  #endWallet { margin-bottom: 8px; }
+  #endWallet img { width: 62px; height: 39px; }
+  .how-wrap { padding: 8px 8px 9px; margin-bottom: 8px; }
+  .how-title { font-size: 17px; }
+  .how { margin-top: 6px; font-size: 14px; }
+  .how .step b { font-size: 23px; }
+  #nextGoal { margin-bottom: 8px; }
+  #cta { height: 50px; font-size: 19px; }
+  .badges { margin-top: 8px; }
+  .badges img { height: 34px; }
+  .chips { margin-top: 6px; }
+  .chips span { font-size: 11px; padding: 2px 8px; }
+  .parent { margin-top: 5px; }
+  #replay { margin-top: 2px; padding: 2px 10px; }
+}
+@media (max-height: 700px) {
+  #end .elogo { display: none; }
+  .how .step small { display: none; }
+  #endTitle { font-size: 19px; }
+}
+
 /* ---------- landscape ---------- */
 @media (orientation: landscape) and (max-height: 540px) {
   #goal { right: auto; width: 300px; }
@@ -340,11 +367,14 @@ html, body {
 
   // ---------------------------------------------------------------- audio (synthesized, starts on first touch)
   const AC = window.AudioContext || window.webkitAudioContext;
-  let ac = null, master = null, muted = false, noiseBuf = null, lastTick = 0;
+  let ac = null, master = null, muted = false, noiseBuf = null, lastTick = 0, audioOpened = false;
 
-  // Called from every touch/click: creates the context on the first one and wakes it up
-  // whenever the phone has suspended or interrupted it (iOS does this often).
-  function unlockAudio() {
+  // Only these count as a real user gesture for audio on iOS/Chrome (a finger landing does not).
+  const GESTURES = { touchend: 1, click: 1, pointerup: 1, keydown: 1 };
+
+  // Called from every touch/click: creates the context on the first one, and keeps "opening" it
+  // inside real gestures until the phone lets it play. Also wakes it after iOS suspends it.
+  function unlockAudio(e) {
     if (!AC) return;
     if (!ac) {
       ac = new AC();
@@ -356,15 +386,20 @@ html, body {
       noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-      // iOS only "opens" audio after a sound starts inside a user gesture: play one silent sample.
+    }
+    const gesture = e && GESTURES[e.type];
+    if ((!audioOpened || ac.state !== "running") && !document.hidden) {
+      const resumed = ac.resume();
+      if (gesture && resumed && resumed.then) resumed.then(() => { if (ac.state === "running") audioOpened = true; }, () => {});
+      // iOS only opens audio once a sound starts inside a real gesture: play one silent sample.
       const silent = ac.createBufferSource();
       silent.buffer = ac.createBuffer(1, 1, ac.sampleRate);
       silent.connect(ac.destination); silent.start(0);
     }
-    if (ac.state !== "running" && !document.hidden) ac.resume();
     loadEndMusic();
   }
-  ["pointerdown", "touchstart", "touchend", "click"].forEach((ev) => document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+  ["pointerdown", "touchstart", "pointerup", "touchend", "click", "keydown"].forEach((ev) =>
+    document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
   document.addEventListener("visibilitychange", () => {
     if (!ac) return;
     if (document.hidden) ac.suspend(); else ac.resume();
