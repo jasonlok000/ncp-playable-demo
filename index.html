@@ -240,7 +240,8 @@ html, body {
     idleTeaserAt: 12,     // s without any input → teaser end card
     hintAfter: 3,         // s idle mid-game → hand hint
     idleFinaleAfter: 10,  // s idle mid-game → finale
-    maxPlayTime: 30,      // s after first input → finale no matter what
+    finalWaveBy: 18,      // s after first input → the final 4-item row arrives even if the player is behind
+    maxPlayTime: 45,      // s after first input → finale no matter what
   };
 
   const REWARDS = [
@@ -735,7 +736,7 @@ html, body {
       trail: [], stroke: null, nextWave: 0, goldenShown: false, firstScan: true,
       hand: null, shake: 0, bagPop: 0, fin: null,
       celebs: [], mega: null, rain: [], flash: 0, zoom: 0,
-      rings: [], streak: 0, lastScan: -9, streakPop: 0, fever: false, sweep: [],
+      rings: [], streak: 0, lastScan: -9, streakPop: 0, fever: false, sweep: [], finalWave: null, finalAt: 0,
     };
     stopMusic(0.1);
     slots.forEach((s) => { s.classList.remove("filled"); s.style.backgroundImage = ""; });
@@ -767,8 +768,8 @@ html, body {
     st.items.push({
       type: ITEM_TYPES[randInt(0, ITEM_TYPES.length - 1)],
       x: x0, y: y0, vx: (tx - x0) / T, vy: -g * T, g,
-      rot: rand(-0.3, 0.3), vr: o.hover ? rand(-0.6, 0.6) : rand(-1.6, 1.6),
-      golden: !!o.golden, hover: !!o.hover, hoverY: apexY,
+      rot: o.fixedValue ? 0 : rand(-0.3, 0.3), vr: o.hover || o.fixedValue ? rand(-0.5, 0.5) : rand(-1.6, 1.6),
+      golden: !!o.golden, hover: !!o.hover, hoverY: apexY, fixedValue: o.fixedValue || 0,
       state: "fly", t: 0, value: 0,
     });
     st.bagPop = 1;
@@ -788,6 +789,22 @@ html, body {
     }
   }
 
+  // The last stretch to $50: the screen empties, then 4 golden items rise in a row for one big swipe.
+  function launchFinalWave() {
+    const lastTier = TIERS[TIERS.length - 1];
+    const need = Math.max(0, lastTier.goal - st.points);
+    const each = Math.max(lastTier.per, Math.ceil(need / 4 / 10) * 10);
+    const apexY = L.playTop + L.ph * 0.34, margin = Math.min(itemSize * 0.6, W * 0.12);
+    for (let i = 0; i < 4; i++) {
+      const x = margin + ((W - margin * 2) * i) / 3;
+      st.pending.push({ delay: 0, apexT: 1.0, golden: true, hover: true, x, apexY: apexY + Math.abs(i - 1.5) * itemSize * 0.15, fixedValue: each });
+    }
+    st.finalWave = "launched";
+    addText("FINAL SWIPE! ⭐", W / 2, L.playTop + L.ph * 0.16, itemSize * 0.5, "#FFD54F", true);
+    st.finalAt = st.time;
+    sfx.combo(4);
+  }
+
   // ---------------------------------------------------------------- scanning
   function scanItem(it, demo) {
     if (it.state !== "fly" && it.state !== "hover") return;
@@ -795,7 +812,7 @@ html, body {
     const tier = TIERS[Math.min(st.tier, TIERS.length - 1)];
     let mult = 1;
     if (!demo && st.stroke) { st.stroke.count++; mult = Math.min(st.stroke.count, 4); }
-    const base = it.golden ? Math.max(400, tier.per * 2) : tier.per;
+    const base = it.fixedValue || (it.golden ? Math.max(400, tier.per * 2) : tier.per);
     it.value = Math.round((base * (1 + 0.5 * (mult - 1))) / 10) * 10;
     st.points += it.value;
     if (!demo) {
@@ -839,6 +856,8 @@ html, body {
 
   function addText(text, x, y, size, color, praise) {
     if (praise) st.texts = st.texts.filter((t) => !t.praise || t.t > 0.5);  // newest praise replaces the last
+    const half = size * text.length * 0.3;  // keep the text on screen
+    x = clamp(x, Math.min(W / 2, half + 6), Math.max(W / 2, W - half - 6));
     st.texts.push({ text, x, y, size, color, praise: !!praise, t: 0, life: praise ? 0.9 : 0.75 });
   }
 
@@ -859,7 +878,7 @@ html, body {
     if (st.mode !== "play" && st.mode !== "intro") return;
     for (const it of st.items) {
       if (it.state !== "fly" && it.state !== "hover") continue;
-      if (segDist(it.x, it.y, ax, ay, bx, by) < itemR + pad) scanItem(it, false);
+      if (segDist(it.x, it.y, ax, ay, bx, by) < itemR + pad + (it.fixedValue ? itemSize * 0.2 : 0)) scanItem(it, false);
     }
   }
 
@@ -941,9 +960,6 @@ html, body {
     st.unlocked.push(REWARDS[idx]);
     st.mode = "mega";
     st.mega = { t: 0, idx, nextFw: 0.35 };
-    // Clear the stage: everything still in the air gets scanned in a rising chain.
-    st.items.filter((i) => i.state === "fly" || i.state === "hover")
-      .forEach((it, k) => st.sweep.push({ it, delay: 0.05 + k * 0.09 }));
     st.pending = [];
     st.hand = null;
     st.stroke = null;
@@ -1106,16 +1122,33 @@ html, body {
       if (st.introT >= CONFIG.idleTeaserAt) showEnd(true);
     } else if (st.mode === "play") {
       const idle = t - st.lastInput;
-      if (idle > CONFIG.hintAfter) {
+      const row = st.finalWave === "launched" ? st.items.filter((i) => i.state === "hover").sort((a, b) => a.x - b.x) : [];
+      if (row.length && t - Math.max(st.lastInput, st.finalAt) > 1.5) {
+        const a = row[0], b = row[row.length - 1], p = (t % 1.6) / 1.6, m = clamp(p / 0.5, 0, 1), e = easeInOut(m);
+        const y = (a.y + b.y) / 2;
+        st.hand = { x: lerp(a.x - itemSize * 0.7, b.x + itemSize * 0.7, e), y, alpha: p > 0.8 ? Math.max(0, 1 - (p - 0.8) / 0.2) : 1, press: m > 0 && m < 1, p: m };
+        if (st.hand.press) st.trail.push({ x: st.hand.x, y: st.hand.y, t, demo: true });
+      } else if (idle > CONFIG.hintAfter) {
         const n = nearestItem();
         st.hand = n ? handSwipe(n, 1.5) : null;
       } else st.hand = null;
       if (idle > CONFIG.idleFinaleAfter || t - st.playStart > CONFIG.maxPlayTime) startFinale();
       const active = st.items.filter((i) => i.state === "fly" || i.state === "hover").length;
       if (active === 0 && !st.pending.length) st.nextWave = Math.min(st.nextWave, t + 0.3);
-      if (t >= st.nextWave && !st.pending.length) { launchWave(); st.nextWave = t + 2.6; }
+      const last = st.tier === TIERS.length - 1;
+      const nearEnd = st.finalWave || (last && st.points >= TIERS[st.tier].goal - TIERS[st.tier].per * 4) || t - st.playStart > CONFIG.finalWaveBy;
+      if (!nearEnd) {
+        if (t >= st.nextWave && !st.pending.length) { launchWave(); st.nextWave = t + 2.6; }
+      } else if (!st.finalWave && active === 0 && !st.pending.length && !st.celebs.length) {
+        launchFinalWave();
+      } else if (st.finalWave === "launched" && active === 0 && !st.pending.length && !st.items.length) {
+        st.finalWave = "done";
+        const short = TIERS[TIERS.length - 1].goal - st.points;
+        if (short > 0) { st.points += short; st.shown += short; addText("+" + short + " bonus!", W / 2, L.playTop + L.ph * 0.4, itemSize * 0.4, "#FFD54F", true); }
+      }
       if (st.tier < TIERS.length && st.shown >= TIERS[st.tier].goal) {
-        if (st.tier === TIERS.length - 1) startMega(); else celebrate();
+        if (!last) celebrate();
+        else if (st.finalWave === "done" && !st.coins.length) startMega();
       }
     } else if (st.mode === "mega") {
       const m = st.mega;
@@ -1513,7 +1546,11 @@ html, body {
       ctx.fillStyle = "#E05024"; ctx.fill();
       ctx.lineWidth = 4; ctx.strokeStyle = "#FFD54F"; ctx.stroke();
       ctx.restore();
-      outlinedText("MEGA REWARD!", cx, by, cw * 0.12, "#FFD54F", a, p);
+      // fit the text inside the banner with even padding
+      ctx.font = "800 100px " + FONT;
+      const unit = ctx.measureText("MEGA REWARD!").width / 100;
+      const fs = Math.min(bh * 0.6, (bw * 0.82) / (unit * 1.08));
+      outlinedText("MEGA REWARD!", cx, by + fs * 0.04, fs, "#FFD54F", a, p);
     }
   }
 
