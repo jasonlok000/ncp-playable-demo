@@ -358,8 +358,20 @@ html, body {
   }
 
   const sfx = {
-    // classic checkout-scanner beep; rises a whole tone per item in a combo
-    beep: (n) => { const f = 1950 * Math.pow(2, ((n || 1) - 1) * 2 / 12); tone(f, 0.11, "sine", 0.16); tone(f, 0.11, "square", 0.035); },
+    // Checkout-scanner beep: flat piezo-style square tone, hard on/off, fixed pitch.
+    beep: () => {
+      if (!ac) return;
+      const t0 = ac.currentTime, dur = 0.12, f = 2400;
+      const o = ac.createOscillator(), bp = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = "square"; o.frequency.value = f;
+      bp.type = "bandpass"; bp.frequency.value = f; bp.Q.value = 1.5;
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.32, t0 + 0.004);
+      g.gain.setValueAtTime(0.32, t0 + dur - 0.008);
+      g.gain.linearRampToValueAtTime(0, t0 + dur);
+      o.connect(bp); bp.connect(g); g.connect(master);
+      o.start(t0); o.stop(t0 + dur + 0.02);
+    },
     coin: () => { tone(1318, 0.06, "sine", 0.12); tone(1976, 0.12, "sine", 0.12, 0.05); },
     whoosh: () => noise(0.16, 0.25, 900),
     combo: (n) => { [659, 784, 988, 1319].slice(0, n).forEach((f, i) => tone(f, 0.12, "triangle", 0.18, i * 0.05)); },
@@ -371,13 +383,26 @@ html, body {
       if (n >= 2) noise(0.3, 0.35, 1500);
     },
     pop: () => noise(0.09, 0.35, 2500),
-    crack: () => { noise(0.14, 0.6, 300); tone(180, 0.15, "square", 0.08, 0, 90); },
+    crack: (n) => { noise(0.14, 0.6, 300 + (n || 0) * 150); tone(180 + (n || 0) * 60, 0.15, "square", 0.08, 0, 90); },
     fanfare: () => {
       noise(0.4, 0.5, 600);
       [[523, 0], [659, 0.12], [784, 0.24], [1047, 0.36], [784, 0.5], [1047, 0.62]].forEach(([f, w]) => tone(f, 0.3, "triangle", 0.22, w));
       tone(1568, 0.6, "sine", 0.12, 0.62);
     },
     click: () => tone(880, 0.05, "sine", 0.15),
+    // Original victory fanfare: rising arpeggio into a big held major chord.
+    victory: () => {
+      const q = 0.13;
+      [[67, 0, 1], [72, 1, 1], [76, 2, 1], [79, 3, 3], [77, 6, 1], [81, 7, 1], [79, 8, 4], [84, 12, 10]].forEach(([m, at, len]) => {
+        tone(mtof(m), q * len * 1.1, "square", 0.06, at * q);
+        tone(mtof(m), q * len * 1.1, "triangle", 0.16, at * q);
+      });
+      [[[60, 64, 67], 3, 3], [[65, 69, 72], 6, 2], [[67, 71, 74], 8, 4], [[72, 76, 79, 84], 12, 10]].forEach(([ch, at, len]) =>
+        ch.forEach((m) => tone(mtof(m), q * len, "triangle", 0.06, at * q)));
+      [[48, 0, 3], [48, 3, 3], [53, 6, 2], [55, 8, 4], [48, 12, 10]].forEach(([m, at, len]) => tone(mtof(m), q * len, "triangle", 0.2, at * q));
+      noise(0.6, 0.3, 6000, 12 * q);
+      [96, 100, 103, 108, 103, 108].forEach((m, i) => tone(mtof(m), 0.16, "sine", 0.05, 12 * q + i * 0.08));
+    },
   };
 
   // Tiny haptic tick on Android (ignored where unsupported).
@@ -683,7 +708,7 @@ html, body {
       trail: [], stroke: null, nextWave: 0, goldenShown: false, firstScan: true,
       hand: null, shake: 0, bagPop: 0, fin: null,
       celebs: [], mega: null, rain: [], flash: 0, zoom: 0,
-      rings: [], streak: 0, lastScan: -9, streakPop: 0, fever: false,
+      rings: [], streak: 0, lastScan: -9, streakPop: 0, fever: false, sweep: [],
     };
     stopMusic(0.1);
     slots.forEach((s) => { s.classList.remove("filled"); s.style.backgroundImage = ""; });
@@ -755,7 +780,7 @@ html, body {
     addText("+" + it.value, it.x, it.y - itemR * 1.1, itemSize * (it.golden ? 0.42 : 0.34) * (1 + 0.35 * h), it.golden ? "#F3B100" : st.fever ? "#FF4FD8" : "#1E927A");
     st.rings.push({ x: it.x, y: it.y, t: 0, R: itemSize * (1.1 + h), hue: st.fever ? (st.time * 300) % 360 : 150 - h * 110 });
     if (st.tier >= 2) st.rings.push({ x: it.x, y: it.y, t: -0.08, R: itemSize * (1.6 + h), hue: 45 });
-    sfx.beep(mult);
+    sfx.beep();
     if (!demo) buzz(it.golden ? 30 : 12);
     if (mult >= 2) {
       addText(PRAISE[mult], clamp(it.x, W * 0.3, W * 0.7), it.y - itemR * 2, itemSize * 0.4, "#fff", true);
@@ -888,7 +913,10 @@ html, body {
     st.tier++;
     st.unlocked.push(REWARDS[idx]);
     st.mode = "mega";
-    st.mega = { t: 0, idx, nextFw: 0.2 };
+    st.mega = { t: 0, idx, nextFw: 0.35 };
+    // Clear the stage: everything still in the air gets scanned in a rising chain.
+    st.items.filter((i) => i.state === "fly" || i.state === "hover")
+      .forEach((it, k) => st.sweep.push({ it, delay: 0.05 + k * 0.09 }));
     st.pending = [];
     st.hand = null;
     st.stroke = null;
@@ -940,6 +968,7 @@ html, body {
     if (!st.unlocked.length) { showEnd(true); return; }
     st.celebs.forEach((c) => fillSlot(c.idx));
     st.celebs = [];
+    stopMusic(0.8);
     st.mode = "finale";
     st.fin = { t: 0, landed: false, taps: 0, lastTap: st.time, open: false, openT: 0, shake: 0 };
   }
@@ -951,14 +980,15 @@ html, body {
     f.shake = 0.35;
     f.lastTap = st.time;
     if (!auto) st.lastInput = st.time;
-    sfx.crack();
+    sfx.crack(f.taps);
     st.shake = 5 + f.taps * 2;
     const c = chestGeom();
     for (let i = 0; i < 8; i++) st.sparks.push({ x: c.cx + rand(-c.w / 2, c.w / 2), y: c.seamY, vx: rand(-60, 60), vy: rand(-180, -60), t: 0, life: 0.5, size: rand(5, 9), color: "#FFE27A" });
     if (f.taps >= 3) {
       f.open = true;
       confettiBurst(c.cx, c.seamY, 180, 1.3);
-      sfx.fanfare();
+      sfx.victory();
+      buzz([30, 40, 30, 40, 120]);
       st.shake = 14;
     }
   }
@@ -1062,7 +1092,12 @@ html, body {
     } else if (st.mode === "mega") {
       const m = st.mega;
       m.t += dt;
-      if (m.t < 1.8 && m.t >= m.nextFw) { firework(rand(W * 0.15, W * 0.85), rand(L.playTop, L.playTop + L.ph * 0.45)); m.nextFw += 0.32; }
+      for (let i = st.sweep.length - 1; i >= 0; i--) {
+        const sw = st.sweep[i];
+        sw.delay -= dt;
+        if (sw.delay <= 0) { scanItem(sw.it, true); st.sweep.splice(i, 1); }
+      }
+      if (m.t < 1.9 && m.t >= m.nextFw) { firework(rand(W * 0.12, W * 0.88), rand(L.playTop + 20, L.bagBottom - 40)); m.nextFw += 0.3; }
       if (m.t >= 2.4) { fillSlot(m.idx); st.mega = null; startFinale(); }
     } else if (st.mode === "finale") {
       const f = st.fin;
@@ -1090,7 +1125,7 @@ html, body {
     }
 
     // items (slow motion during unlock)
-    const idt = st.mode === "mega" ? dt * 0.3 : dt;
+    const idt = st.mode === "mega" ? dt * 0.15 : dt;
     for (let i = st.items.length - 1; i >= 0; i--) {
       const it = st.items[i];
       it.t += it.state === "scan" ? dt : idt;
@@ -1415,11 +1450,22 @@ html, body {
     }
   }
 
+  // Card + banner as one group, scaled to fit between the goal bar and the bag, centred.
+  function megaGeom() {
+    const ratio = CARD_H / CARD_W, top = L.playTop + 8, bottom = L.bagBottom - 8, avail = bottom - top;
+    let cw = Math.min(W * 0.8, 340);
+    const groupH = (w) => w * ratio + w * 0.2 * 1.6;
+    if (groupH(cw) > avail * 0.9) cw = (avail * 0.9) / (ratio + 0.32);
+    const gh = groupH(cw), y0 = top + (avail - gh) / 2;
+    const cy = y0 + (cw * ratio) / 2;
+    return { cw, cx: W / 2, cy, by: y0 + cw * ratio + cw * 0.2 * 0.85 };
+  }
+
   function drawMega() {
     const m = st.mega, t = m.t;
     const a = Math.min(1, t / 0.2) * (t > 2.0 ? Math.max(0, 1 - (t - 2.0) / 0.4) : 1);
-    ctx.fillStyle = "rgba(15,49,70," + 0.45 * a + ")"; ctx.fillRect(0, 0, W, H);
-    const cw = Math.min(W * 0.72, 330, L.ph * 0.9), cx = W / 2, cy = L.playTop + L.ph * 0.4;
+    ctx.fillStyle = "rgba(255,213,79," + 0.18 * a + ")"; ctx.fillRect(0, 0, W, H);
+    const g = megaGeom(), cw = g.cw, cx = g.cx, cy = g.cy;
     if (t < 2.0) drawRays(cx, cy, cw * 1.3, 0.8 * a, st.time * 0.9);
     let x = cx, y = cy, w = cw;
     if (t < 0.45) w = cw * Math.max(0.01, easeOutBack(t / 0.45));
@@ -1431,7 +1477,7 @@ html, body {
     drawCardAt(cards.front[m.idx], x, y, w, 1, t < 2.0 ? 0.7 + 0.3 * Math.sin(st.time * 8) : 0);
     if (t > 0.25 && t < 2.0) {
       const p = easeOutBack(Math.min(1, (t - 0.25) / 0.25));
-      const bw = cw * 0.95, bh = cw * 0.2, by = cy + (cw * CARD_H) / CARD_W / 2 + bh * 0.85;
+      const bw = cw * 0.95, bh = cw * 0.2, by = g.by;
       ctx.save();
       ctx.globalAlpha = a;
       ctx.translate(cx, by); ctx.scale(p, p);
