@@ -151,17 +151,6 @@ html, body {
 .disc { font-size: 10px; line-height: 1.35; opacity: .55; margin-top: 4px; }
 .hidden { display: none !important; }
 
-/* ---------- sound button: shown muted until the phone really allows audio ---------- */
-#topbar { z-index: 3; }
-#mute { position: relative; }
-#mute.needtap { animation: muteGlow 1s ease-in-out infinite; }
-#mute.needtap::after {
-  content: "Tap for sound"; position: absolute; top: 42px; right: -6px; white-space: nowrap;
-  background: var(--navy); color: var(--white); font: 600 11px "Poppins", sans-serif;
-  padding: 4px 9px; border-radius: 999px; box-shadow: 0 2px 6px rgba(15,49,70,.3);
-}
-@keyframes muteGlow { 50% { box-shadow: 0 0 0 6px rgba(30,146,122,.3); } }
-
 /* ---------- shorter phones / browser toolbars: same end card, tighter spacing so it all fits ---------- */
 @media (max-height: 820px) {
   #end { padding: 10px; }
@@ -304,7 +293,6 @@ html, body {
   const cv = $("cv");
   const ctx = cv.getContext("2d");
   const ptsEl = $("pts"), ptsNum = $("ptsNum"), goalEl = $("goal"), goalImg = $("goalImg"), goalName = $("goalName");
-  const muteBtn = $("mute");
   const barFill = $("barFill"), walletEl = $("wallet"), headline = $("headline"), endEl = $("end");
   const logoImg = new Image();
   logoImg.src = $("logo").src;
@@ -797,7 +785,6 @@ html, body {
       hand: null, shake: 0, bagPop: 0, fin: null,
       celebs: [], mega: null, rain: [], flash: 0, zoom: 0,
       rings: [], streak: 0, lastScan: -9, streakPop: 0, fever: false, sweep: [], finalWave: null, finalAt: 0, hintTarget: null, hintCycle: -1,
-      swipeTaught: false, tutStart: 0, tutUntil: 0,
     };
     stopMusic(0.1);
     slots.forEach((s) => { s.classList.remove("filled"); s.style.backgroundImage = ""; });
@@ -844,7 +831,6 @@ html, body {
     if (tier.golden > 0 && (!st.goldenShown || Math.random() < tier.golden)) { goldenIdx = randInt(0, k - 1); st.goldenShown = true; }
     // spread targets across the width so multi-item waves line up for a swipe
     const span = W - itemSize * 1.6;
-    if (k >= 2 && !st.swipeTaught) { st.swipeTaught = true; st.tutStart = st.time + 0.55; st.tutUntil = st.time + 2.4; }
     for (let i = 0; i < k; i++) {
       const x = k === 1 ? null : itemSize * 0.8 + span * ((i + rand(0.2, 0.8)) / k);
       st.pending.push({ delay: i * 0.12, apexT: tier.apexT, golden: i === goldenIdx, x });
@@ -889,7 +875,6 @@ html, body {
     sfx.beep();
     if (!demo) buzz(it.golden ? 30 : 12);
     if (mult >= 2) {
-      st.tutUntil = 0;  // they've got the swipe
       addText(PRAISE[mult], clamp(it.x, W * 0.3, W * 0.7), it.y - itemR * 2, itemSize * 0.4, "#fff", true);
       sfx.combo(mult);
     }
@@ -974,10 +959,9 @@ html, body {
   cv.addEventListener("pointercancel", endStroke);
   document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 
-  const audioLive = () => !!ac && ac.state === "running" && audioOpened;
-  $("mute").addEventListener("click", (e) => {
-    if (!muted && !audioLive()) { unlockAudio(e); return; }  // first tap just turns sound on
+  $("mute").addEventListener("click", () => {
     muted = !muted;
+    $("mute").textContent = muted ? "🔇" : "🔊";
     if (master) master.gain.value = muted ? 0 : 0.5;
   });
   $("getBtn").addEventListener("click", () => openStore());
@@ -1149,14 +1133,6 @@ html, body {
     return { x: lerp(ax, bx, e), y: lerp(ay, by, e), alpha: p < 0.05 ? p / 0.05 : p > 0.75 ? Math.max(0, 1 - (p - 0.75) / 0.2) : 1, press: m > 0 && m < 1, p: m };
   }
 
-  // Hand taps the target: approaches from below, presses, lifts.
-  function handTap(target, period) {
-    const p = (st.time % period) / period;
-    const press = p > 0.35 && p < 0.55;
-    const lift = p < 0.35 ? (0.35 - p) * itemSize * 0.9 : p > 0.55 ? (p - 0.55) * itemSize * 0.5 : 0;
-    return { x: target.x + itemSize * 0.08, y: target.y + itemSize * 0.05 + lift, alpha: p < 0.08 ? p / 0.08 : p > 0.85 ? Math.max(0, 1 - (p - 0.85) / 0.15) : 1, press, tap: true };
-  }
-
   // Glide the hand toward where it should be instead of jumping, and leave a demo trail.
   function setHand(h, dt) {
     if (h && st.hand && st.hand.x != null) {
@@ -1164,7 +1140,7 @@ html, body {
       h.x = lerp(st.hand.x, h.x, k); h.y = lerp(st.hand.y, h.y, k);
     }
     st.hand = h;
-    if (h && h.press && !h.tap) st.trail.push({ x: h.x, y: h.y, t: st.time, demo: true });
+    if (h && h.press) st.trail.push({ x: h.x, y: h.y, t: st.time, demo: true });
   }
 
   const hintable = (it) => it && (it.state === "fly" || it.state === "hover") &&
@@ -1193,8 +1169,8 @@ html, body {
         st.respawnAt = Infinity;
       }
       if (hover && hover.state === "hover") {
-        setHand(handTap(hover, 1.4), dt);
-        if (!st.demoDone && st.introT >= CONFIG.demoScanAt && st.hand.press) {
+        setHand(handSwipe(hover, 1.7), dt);
+        if (!st.demoDone && st.introT >= CONFIG.demoScanAt && st.hand.p > 0.45 && st.hand.p < 0.6) {
           scanItem(hover, true);
           st.demoDone = true;
           st.respawnAt = t + 1.1;
@@ -1205,9 +1181,8 @@ html, body {
       if (st.introT >= CONFIG.idleTeaserAt) showEnd(true);
     } else if (st.mode === "play") {
       const idle = t - st.lastInput;
-      const tut = t > st.tutStart && t < st.tutUntil ? st.items.filter(hintable).sort((a, b) => a.x - b.x) : [];
-      const row = st.finalWave === "launched" ? st.items.filter((i) => i.state === "hover").sort((a, b) => a.x - b.x) : tut.length >= 2 ? tut : [];
-      if (row.length && (tut.length >= 2 || t - Math.max(st.lastInput, st.finalAt) > 1.5)) {
+      const row = st.finalWave === "launched" ? st.items.filter((i) => i.state === "hover").sort((a, b) => a.x - b.x) : [];
+      if (row.length && t - Math.max(st.lastInput, st.finalAt) > 1.5) {
         const a = row[0], b = row[row.length - 1], p = (t % 1.6) / 1.6, m = clamp(p / 0.5, 0, 1), e = easeInOut(m);
         const y = (a.y + b.y) / 2;
         setHand({ x: lerp(a.x - itemSize * 0.7, b.x + itemSize * 0.7, e), y, alpha: p > 0.8 ? Math.max(0, 1 - (p - 0.8) / 0.2) : 1, press: m > 0 && m < 1, p: m }, dt);
@@ -1357,9 +1332,6 @@ html, body {
     if (Math.abs(st.shown - st.display) < 1) st.display = st.shown;
     const shownTxt = Math.round(st.display).toLocaleString("en-US");
     if (ptsNum.textContent !== shownTxt) ptsNum.textContent = shownTxt;
-    const live = audioLive(), icon = !muted && live ? "🔊" : "🔇";
-    if (muteBtn.textContent !== icon) muteBtn.textContent = icon;
-    muteBtn.classList.toggle("needtap", !muted && !live && st.mode !== "end");
     const ti = Math.min(st.tier, TIERS.length - 1);
     const prev = ti > 0 ? TIERS[ti - 1].goal : 0;
     const frac = st.tier >= TIERS.length ? 1 : clamp((st.display - prev) / (TIERS[ti].goal - prev), 0, 1);
@@ -1759,9 +1731,8 @@ html, body {
     for (const it of st.items) if (it.state === "scan") drawItem(it);
 
     if (st.mode === "intro" || (st.mode === "play" && st.hand)) {
-      const hv = st.items.find((i) => i.state === "hover") || (st.hand && (st.hintTarget || st.items.find(hintable)));
-      const label = st.mode === "intro" ? "Tap to scan!" : st.time < st.tutUntil ? "Swipe through them!" : "Swipe to scan!";
-      if (hv && st.hand) outlinedText(label, W / 2, Math.min(hv.y + itemSize * 1.0, L.playBottom - 14), Math.max(20, itemSize * 0.3), "#fff", st.hand.alpha * 0.5 + 0.5, 1 + 0.04 * Math.sin(st.time * 6));
+      const hv = st.items.find((i) => i.state === "hover") || (st.hand && st.hintTarget);
+      if (hv && st.hand) outlinedText("Swipe to scan!", W / 2, Math.min(hv.y + itemSize * 1.0, L.playBottom - 14), Math.max(20, itemSize * 0.3), "#fff", st.hand.alpha * 0.5 + 0.5, 1 + 0.04 * Math.sin(st.time * 6));
     }
 
     drawRings();
