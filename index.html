@@ -256,7 +256,7 @@ html, body {
     network: window.__NETWORK__ || "web",
     storeAndroid: "https://play.google.com/store/apps/details?id=com.ncp.ncpmobile",
     storeIOS: "https://apps.apple.com/us/app/ncpmobile-shopping-rewards/id479662168",
-    ctaText: "Apply Free Now ➜",
+    ctaText: "Join Now ➜",
     reviewQuote: "",      // client-approved store review, e.g. "So easy, and the gift cards are real!"
     reviewAuthor: "",
     demoScanAt: 4,        // s without any input → one demo scan
@@ -278,9 +278,9 @@ html, body {
   // Cumulative point goals; each tier pays more per scan so unlocks keep a steady rhythm.
   const TIERS = [
     { goal: 300,  per: 100, wave: [1, 1], apexT: 1.15, golden: 0 },
-    { goal: 1000, per: 200, wave: [1, 2], apexT: 1.05, golden: 0 },
-    { goal: 2500, per: 250, wave: [2, 3], apexT: 0.95, golden: 0.3 },
-    { goal: 5000, per: 350, wave: [3, 4], apexT: 0.9,  golden: 0.2 },
+    { goal: 1000, per: 200, wave: [1, 2], apexT: 1.15, golden: 0 },
+    { goal: 2500, per: 250, wave: [2, 3], apexT: 1.15, golden: 0.3 },
+    { goal: 5000, per: 350, wave: [3, 4], apexT: 1.1,  golden: 0.2 },
   ];
 
   const PRAISE = { 2: "Double!", 3: "Triple!", 4: "Super Saver! 🔥" };
