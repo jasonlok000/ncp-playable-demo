@@ -380,7 +380,7 @@ html, body {
   function playEndMusic() {
     if (!ac || !endMusic) return;
     const src = ac.createBufferSource(), g = ac.createGain();
-    src.buffer = endMusic; g.gain.value = 0.9;
+    src.buffer = endMusic; g.gain.value = 1.1;
     src.connect(g); g.connect(master);
     src.start();
   }
@@ -470,7 +470,7 @@ html, body {
   const music = { on: false, next: 0, step: 0, timer: null, gain: null };
   const CHORDS = [[48, 55, 60, 64], [43, 50, 55, 59], [45, 52, 57, 60], [41, 48, 53, 57]];
   const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
-  const MUSIC_VOL = 0.45;
+  const MUSIC_VOL = 0.6;
 
   function startMusic() {
     if (!ac || music.on) return;
